@@ -1,0 +1,3 @@
+[submodule "modules/fastqc"]
+	path = modules/fastqc
+	url = https://github.com/EIT-GBI/nf-mod-fastqc.git
