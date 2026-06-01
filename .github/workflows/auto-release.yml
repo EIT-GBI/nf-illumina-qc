@@ -1,0 +1,49 @@
+name: Auto-release on submodule MINOR bump
+
+# Fires after the submodule sync workflow has updated the pointers.
+# That sync commit is the one tagged "chore(submodules):", and it only
+# exists when modules.versions actually changed via a Renovate merge.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    if: startsWith(github.event.head_commit.message, 'chore(submodules): sync pointers')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.NF_ORG_PAT }}
+
+      - name: Compute next MINOR tag
+        id: next
+        run: |
+          set -euo pipefail
+          LAST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || echo "v0.0.0")
+          MAJOR=$(echo "${LAST#v}" | cut -d. -f1)
+          MINOR=$(echo "${LAST#v}" | cut -d. -f2)
+          NEXT="v${MAJOR}.$((MINOR + 1)).0"
+          echo "last=${LAST}" >> "$GITHUB_OUTPUT"
+          echo "next=${NEXT}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release (which creates the tag)
+        env:
+          GH_TOKEN: ${{ secrets.NF_ORG_PAT }}
+          NEXT: ${{ steps.next.outputs.next }}
+          PREV: ${{ steps.next.outputs.last }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          gh release create "$NEXT" \
+            --target "$GITHUB_SHA" \
+            --title "$NEXT" \
+            --generate-notes \
+            --notes "Automated MINOR release propagating an upstream nf-mod submodule MINOR update.
+
+          Previous release: $PREV"
