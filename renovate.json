@@ -1,4 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>EIT-GBI/nf-renovate-config"]
+  "extends": ["github>EIT-GBI/nf-renovate-config"] 
 }
