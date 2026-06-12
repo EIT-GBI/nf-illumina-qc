@@ -1,9 +1,5 @@
 name: Sync submodule pointers to modules.versions
 
-# Triggered when Renovate (or anyone) merges a change to modules.versions.
-# Reads the new version pins, fetches the matching tags inside each submodule,
-# and moves the submodule pointer to match. Commits the change back to main.
-
 on:
   push:
     branches: [main]
@@ -12,8 +8,7 @@ on:
 
 jobs:
   sync:
-    # Only run for commits that came from Renovate (avoid loops on manual edits).
-    if: startsWith(github.event.head_commit.message, 'feat(deps):')
+    if: startsWith(github.event.head_commit.message, 'feat(deps)')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -47,7 +42,7 @@ jobs:
               | head -n1)
 
             if [ -z "$submodule_path" ]; then
-              echo "WARN: no submodule found for ${module}, skipping"
+              echo "WARN no submodule found for ${module}, skipping"
               continue
             fi
 
@@ -81,5 +76,5 @@ jobs:
       - name: Commit and push if anything changed
         if: steps.sync.outputs.changed == '1'
         run: |
-          git commit -m "chore(submodules): sync pointers to modules.versions [skip ci]"
+          git commit -m "chore(submodules) sync pointers to modules.versions [skip ci]"
           git push origin main
