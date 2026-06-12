@@ -46,7 +46,6 @@ jobs:
             [[ "$module" == \#* ]] && continue
 
             # Find the submodule path whose URL ends with /<module>(.git)?
-            # `git config -f .gitmodules` lists all submodule.<name>.url entries.
             submodule_path=$(git config -f .gitmodules --get-regexp '^submodule\..*\.url$' \
               | awk -v m="$module" '$2 ~ ("/"m"(\\.git)?$") { sub(/\.url$/, ".path", $1); print $1 }' \
               | head -n1)
@@ -57,27 +56,32 @@ jobs:
             fi
 
             actual_path=$(git config -f .gitmodules --get "$submodule_path")
-            echo "Module ${module} -> ${actual_path}, target version ${version}"
+
+            # Normalize the version: strip any leading 'v', then add one.
+            # This way both "1.1.0" and "v1.1.0" in modules.versions work.
+            version_clean="${version#v}"
+            target_tag="v${version_clean}"
+            echo "Module ${module} -> ${actual_path}, target tag ${target_tag}"
 
             # Fetch tags inside the submodule and check out the requested tag.
             pushd "$actual_path" > /dev/null
             git fetch --tags --quiet origin
             current_sha=$(git rev-parse HEAD)
-            target_sha=$(git rev-parse "refs/tags/${version}^{commit}")
+            target_sha=$(git rev-parse "refs/tags/${target_tag}^{commit}")
 
             if [ "$current_sha" = "$target_sha" ]; then
-              echo "  Already at ${version} (${target_sha:0:8}), nothing to do."
+              echo "  Already at ${target_tag} (${target_sha:0:8}), nothing to do."
               popd > /dev/null
               continue
             fi
 
-            git checkout --quiet "refs/tags/${version}"
+            git checkout --quiet "refs/tags/${target_tag}"
             popd > /dev/null
 
             # Stage the submodule pointer change in the outer repo.
             git add "$actual_path"
             CHANGED=1
-            echo "  Updated ${actual_path} to ${version}"
+            echo "  Updated ${actual_path} to ${target_tag}"
           done < modules.versions
 
           echo "changed=${CHANGED}" >> "$GITHUB_OUTPUT"
