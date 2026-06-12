@@ -1,16 +1,12 @@
 name: Auto-release on submodule MINOR bump
 
-# Triggered by the commit made by sync-submodules.yml.
-# Reads the current version from nextflow.config, bumps MINOR,
-# writes back, commits, and publishes a release.
-
 on:
   push:
     branches: [main]
 
 jobs:
   release:
-    if: startsWith(github.event.head_commit.message, 'chore(submodules): sync pointers')
+    if: startsWith(github.event.head_commit.message, 'chore(submodules)')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,15 +22,15 @@ jobs:
           set -euo pipefail
           CURRENT=$(grep -oP "version\s*=\s*['\"]\K[^'\"]+" nextflow.config | head -n1)
           if [ -z "$CURRENT" ]; then
-            echo "ERROR: could not find version in nextflow.config"
+            echo "ERROR could not find version in nextflow.config"
             exit 1
           fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
           NEXT_MINOR=$((MINOR + 1))
           NEXT="${MAJOR}.${NEXT_MINOR}.0"
-          echo "current=${CURRENT}"  >> "$GITHUB_OUTPUT"
-          echo "next=${NEXT}"        >> "$GITHUB_OUTPUT"
-          echo "next_tag=v${NEXT}"   >> "$GITHUB_OUTPUT"
+          echo "current=${CURRENT}" >> "$GITHUB_OUTPUT"
+          echo "next=${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "next_tag=v${NEXT}" >> "$GITHUB_OUTPUT"
 
       - name: Update nextflow.config and commit
         env:
@@ -44,7 +40,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           sed -i "s/version\s*=\s*['\"][^'\"]*['\"]/version = '${NEXT}'/" nextflow.config
           git add nextflow.config
-          git commit -m "chore: bump version to ${NEXT} [skip ci]"
+          git commit -m "chore bump version to ${NEXT} [skip ci]"
           git push origin main
 
       - name: Create GitHub release
@@ -53,5 +49,5 @@ jobs:
           NEXT_TAG: ${{ steps.next.outputs.next_tag }}
           CURRENT: ${{ steps.next.outputs.current }}
         run: |
-          NOTES="Automated MINOR release propagating an upstream nf-mod submodule MINOR update. Previous version: v${CURRENT}"
+          NOTES="Automated MINOR release propagating an upstream nf-mod submodule MINOR update. Previous version v${CURRENT}"
           gh release create "$NEXT_TAG" --target main --title "$NEXT_TAG" --generate-notes --notes "$NOTES"
