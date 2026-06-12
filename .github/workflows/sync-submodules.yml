@@ -1,95 +1,62 @@
-name: Sync submodule pointers to modules.versions
+name: Auto-release on submodule MINOR bump
 
-# Runs after a Renovate MINOR-bump PR is merged. Reads modules.versions,
-# finds entries whose pinned tag differs from the actual submodule SHA,
-# and moves the submodule pointer to match. Commits the change back to main.
+# Fires after the submodule sync workflow has updated the pointers.
+# That sync commit is the one tagged "chore(submodules):", and it only
+# exists when modules.versions actually changed via a Renovate merge.
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'modules.versions'
 
 jobs:
-  sync:
-    # Only run for commits that came from Renovate (avoid loops on manual edits).
-    if: startsWith(github.event.head_commit.message, 'feat(deps):')
+  release:
+    if: startsWith(github.event.head_commit.message, 'chore(submodules): sync pointers')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout (with submodules)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: true
           fetch-depth: 0
           token: ${{ secrets.NF_ORG_PAT }}
 
-      - name: Configure git identity
+      - name: Compute next MINOR version
+        id: next
+        run: |
+          set -euo pipefail
+          CURRENT=$(grep -oP "version\s*=\s*['\"]\K[^'\"]+" nextflow.config | head -n1)
+          if [ -z "$CURRENT" ]; then
+            echo "ERROR: could not find version in nextflow.config"
+            exit 1
+          fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEXT_MINOR=$((MINOR + 1))
+          NEXT="${MAJOR}.${NEXT_MINOR}.0"
+          echo "current=${CURRENT}"  >> "$GITHUB_OUTPUT"
+          echo "next=${NEXT}"        >> "$GITHUB_OUTPUT"
+          echo "next_tag=v${NEXT}"   >> "$GITHUB_OUTPUT"
+
+      - name: Update nextflow.config and commit
+        env:
+          NEXT: ${{ steps.next.outputs.next }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Sync each submodule to its declared version
-        id: sync
-        run: |
-          set -euo pipefail
-
-          CHANGED=0
-
-          # Parse modules.versions: skip comments and blank lines.
-          while IFS='=' read -r module version; do
-            # Trim whitespace
-            module=$(echo "$module" | xargs)
-            version=$(echo "$version" | xargs)
-            [ -z "$module" ] && continue
-            [[ "$module" == \#* ]] && continue
-
-            # Find the submodule path whose URL ends with /<module>(.git)?
-            submodule_path=$(git config -f .gitmodules --get-regexp '^submodule\..*\.url$' \
-              | awk -v m="$module" '$2 ~ ("/"m"(\\.git)?$") { sub(/\.url$/, ".path", $1); print $1 }' \
-              | head -n1)
-
-            if [ -z "$submodule_path" ]; then
-              echo "WARN: no submodule found for ${module}, skipping"
-              continue
-            fi
-
-            actual_path=$(git config -f .gitmodules --get "$submodule_path")
-
-            # Normalize the version: strip any leading 'v', then add one.
-            # This way both "1.1.0" and "v1.1.0" in modules.versions work.
-            version_clean="${version#v}"
-            target_tag="v${version_clean}"
-            echo "Module ${module} -> ${actual_path}, target tag ${target_tag}"
-
-            # Fetch tags inside the submodule and check out the requested tag.
-            pushd "$actual_path" > /dev/null
-            git fetch --tags --quiet origin
-            current_sha=$(git rev-parse HEAD)
-            target_sha=$(git rev-parse "refs/tags/${target_tag}^{commit}")
-
-            if [ "$current_sha" = "$target_sha" ]; then
-              echo "  Already at ${target_tag} (${target_sha:0:8}), nothing to do."
-              popd > /dev/null
-              continue
-            fi
-
-            git checkout --quiet "refs/tags/${target_tag}"
-            popd > /dev/null
-
-            # Stage the submodule pointer change in the outer repo.
-            git add "$actual_path"
-            CHANGED=1
-            echo "  Updated ${actual_path} to ${target_tag}"
-          done < modules.versions
-
-          echo "changed=${CHANGED}" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and push if anything changed
-        if: steps.sync.outputs.changed == '1'
-        run: |
-          git commit -m "chore(submodules): sync pointers to modules.versions
-
-          [skip ci]"
+          sed -i "s/version\s*=\s*['\"][^'\"]*['\"]/version = '${NEXT}'/" nextflow.config
+          git add nextflow.config
+          git commit -m "chore: bump version to ${NEXT} [skip ci]"
           git push origin main
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.NF_ORG_PAT }}
+          NEXT_TAG: ${{ steps.next.outputs.next_tag }}
+          CURRENT: ${{ steps.next.outputs.current }}
+        run: |
+          gh release create "$NEXT_TAG" \
+            --target main \
+            --title "$NEXT_TAG" \
+            --generate-notes \
+            --notes "Automated MINOR release propagating an upstream nf-mod submodule MINOR update.
+
+          Previous version: v${CURRENT}"
