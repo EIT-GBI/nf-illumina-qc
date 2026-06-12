@@ -10,7 +10,7 @@ on:
 
 jobs:
   release:
-    if: ${{ startsWith(github.event.head_commit.message, 'chore(submodules): sync pointers') }}
+    if: startsWith(github.event.head_commit.message, 'chore(submodules): sync pointers')
     runs-on: ubuntu-latest
     permissions:
       contents: write
