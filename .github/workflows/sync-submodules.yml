@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -30,6 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           CHANGED=0
+          MAJOR_MODULES=""
 
           while IFS='=' read -r module version; do
             module=$(echo "$module" | xargs)
@@ -63,18 +65,75 @@ jobs:
               continue
             fi
 
-            git checkout --quiet "refs/tags/${target_tag}"
+            # Version the submodule currently points to (nearest tag), stripped to X.Y.Z
+            current_desc=$(git describe --tags "$current_sha" 2>/dev/null || echo "")
             popd > /dev/null
+            current_clean=$(echo "$current_desc" | sed 's/^v//' | cut -d- -f1)
 
-            git add "$actual_path"
-            CHANGED=1
-            echo "  Updated ${actual_path} to ${target_tag}"
+            # Classify the bump level by comparing current -> target semver
+            IFS='.' read -r TGT_MAJ TGT_MIN TGT_PAT <<< "$version_clean"
+            level="minor"   # safe default if the current version can't be determined
+            if [ -n "$current_clean" ]; then
+              IFS='.' read -r CUR_MAJ CUR_MIN CUR_PAT <<< "$current_clean"
+              if   [ "$TGT_MAJ" -gt "$CUR_MAJ" ]; then level="major"
+              elif [ "$TGT_MAJ" -eq "$CUR_MAJ" ] && [ "$TGT_MIN" -gt "$CUR_MIN" ]; then level="minor"
+              elif [ "$TGT_MAJ" -eq "$CUR_MAJ" ] && [ "$TGT_MIN" -eq "$CUR_MIN" ] && [ "$TGT_PAT" -gt "$CUR_PAT" ]; then level="patch"
+              else level="none"
+              fi
+            fi
+
+            case "$level" in
+              major)
+                echo "  MAJOR update ${current_clean:-unknown} -> ${version_clean}: NOT syncing, flagging for manual update."
+                MAJOR_MODULES="${MAJOR_MODULES}${module}|${current_clean:-unknown}|${version_clean}"$'\n'
+                ;;
+              minor)
+                pushd "$actual_path" > /dev/null
+                git checkout --quiet "refs/tags/${target_tag}"
+                popd > /dev/null
+                git add "$actual_path"
+                CHANGED=1
+                echo "  MINOR update ${current_clean:-unknown} -> ${version_clean}: synced ${actual_path} to ${target_tag}."
+                ;;
+              patch)
+                echo "  PATCH update ${current_clean} -> ${version_clean}: ignoring per policy."
+                ;;
+              none)
+                echo "  ${current_clean} -> ${version_clean} is not a forward bump (downgrade/equal): skipping."
+                ;;
+            esac
           done < modules.versions
 
           echo "changed=${CHANGED}" >> "$GITHUB_OUTPUT"
+          {
+            echo "major_modules<<MAJOR_EOF"
+            printf '%s' "$MAJOR_MODULES"
+            echo "MAJOR_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Commit and push if anything changed
         if: steps.sync.outputs.changed == '1'
         run: |
-          git commit -m "chore(submodules) sync pointers to modules.versions [skip ci]"
+          git commit -m "chore(submodules) sync pointers to modules.versions"
           git push origin main
+
+      - name: Open issues for MAJOR submodule updates
+        if: steps.sync.outputs.major_modules != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAJOR_MODULES: ${{ steps.sync.outputs.major_modules }}
+        run: |
+          set -euo pipefail
+          while IFS='|' read -r module old new; do
+            [ -z "$module" ] && continue
+            title="Manual update needed: major bump of ${module} (${old} -> ${new})"
+            # Skip if an open issue with this exact title already exists
+            existing=$(gh issue list --state open --search "in:title \"${title}\"" --json number --jq 'length')
+            if [ "$existing" -gt 0 ]; then
+              echo "Issue already open for ${module}, skipping."
+              continue
+            fi
+            body=$(printf 'Renovate proposed a **major** version update for \x60%s\x60: \x60%s\x60 -> \x60%s\x60.\n\nThe submodule pointer was **not** moved automatically, because a major bump may contain breaking changes that require manual pipeline updates.\n\n**To do:**\n- Review the upstream changelog/release notes for breaking changes.\n- Update the pipeline code as needed.\n- Sync the submodule pointer to \x60v%s\x60 and bump the pipeline version manually.' "$module" "$old" "$new" "$new")
+            gh issue create --title "$title" --body "$body" --label "bump:major" \
+              || gh issue create --title "$title" --body "$body"
+          done <<< "$MAJOR_MODULES"
