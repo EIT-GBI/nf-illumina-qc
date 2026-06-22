@@ -1,16 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>EIT-GBI/nf-renovate-config"],
-  "packageRules": [
-    {
-      "description": [
-        "MAJOR bumps of nf-mod-* submodules: surface in the Dependency Dashboard for manual handling (breaking changes need manual pipeline updates), instead of dropping them silently. Renovate opens no PR until the dashboard checkbox is ticked."
-      ],
-      "matchDepTypes": ["nf-module"],
-      "matchUpdateTypes": ["major"],
-      "enabled": true,
-      "dependencyDashboardApproval": true,
-      "labels": ["dependencies", "nf-module", "bump:major"]
-    }
-  ]
+  "extends": ["github>EIT-GBI/nf-renovate-config"]
 }
